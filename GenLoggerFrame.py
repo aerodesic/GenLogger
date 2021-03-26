@@ -38,23 +38,33 @@ class GenLoggerFrame(wx.Frame):
 
         mainSizer = wx.FlexGridSizer(3, 1, 0, 0)
 
-        configSizer = wx.FlexGridSizer(1, 5, 0, 8)
-        mainSizer.Add(configSizer, 1, wx.ALL | wx.EXPAND, 5)
+        self.configSizer = wx.FlexGridSizer(1, 8, 0, 8)
+        mainSizer.Add(self.configSizer, 1, wx.ALL | wx.EXPAND, 5)
 
         self.portCombo = wx.ComboBox(self.mainPanel, wx.ID_ANY, choices=[], style=wx.CB_DROPDOWN)
-        configSizer.Add(self.portCombo, 0, wx.EXPAND, 0)
+        self.configSizer.Add(self.portCombo, 0, wx.EXPAND, 0)
 
         self.refreshButton = wx.Button(self.mainPanel, wx.ID_ANY, "Rescan Channels")
-        configSizer.Add(self.refreshButton, 0, 0, 0)
+        self.configSizer.Add(self.refreshButton, 0, 0, 0)
 
         self.startButton = wx.Button(self.mainPanel, wx.ID_ANY, "Start")
-        configSizer.Add(self.startButton, 0, 0, 0)
+        self.configSizer.Add(self.startButton, 0, 0, 0)
 
         self.stopButton = wx.Button(self.mainPanel, wx.ID_ANY, "Stop")
-        configSizer.Add(self.stopButton, 0, 0, 0)
+        self.configSizer.Add(self.stopButton, 0, 0, 0)
+
+        self.startlogButton = wx.Button(self.mainPanel, wx.ID_ANY, "Start Log")
+        self.configSizer.Add(self.startlogButton, 0, 0, 0)
+
+        self.stoplogButton = wx.Button(self.mainPanel, wx.ID_ANY, "Stop Log")
+        self.configSizer.Add(self.stoplogButton, 0, 0, 0)
+
+        self.loggingStatus = wx.StaticText(self.mainPanel, wx.ID_ANY, "[Logging]")
+        self.loggingStatus.Hide()
+        self.configSizer.Add(self.loggingStatus, 0, wx.ALIGN_CENTER_VERTICAL, 0)
 
         self.gentestFrame = wx.Button(self.mainPanel, wx.ID_ANY, "Exit")
-        configSizer.Add(self.gentestFrame, 0, 0, 0)
+        self.configSizer.Add(self.gentestFrame, 0, 0, 0)
 
         plotSizer = wx.FlexGridSizer(2, 1, 0, 0)
         mainSizer.Add(plotSizer, 1, wx.ALL | wx.EXPAND, 0)
@@ -127,7 +137,7 @@ class GenLoggerFrame(wx.Frame):
         plotSizer.AddGrowableRow(1)
         plotSizer.AddGrowableCol(0)
 
-        configSizer.AddGrowableCol(0)
+        self.configSizer.AddGrowableCol(0)
 
         mainSizer.AddGrowableRow(1)
         mainSizer.AddGrowableCol(0)
@@ -139,6 +149,8 @@ class GenLoggerFrame(wx.Frame):
         self.Bind(wx.EVT_BUTTON, self.OnRefreshPorts, self.refreshButton)
         self.Bind(wx.EVT_BUTTON, self.OnStartButton, self.startButton)
         self.Bind(wx.EVT_BUTTON, self.OnStopButton, self.stopButton)
+        self.Bind(wx.EVT_BUTTON, self.OnStartLogButton, self.startlogButton)
+        self.Bind(wx.EVT_BUTTON, self.OnStopLogButton, self.stoplogButton)
         self.Bind(wx.EVT_BUTTON, self.OnExitButton, self.gentestFrame)
         self.Bind(wx.EVT_CHECKBOX, self.OnFFTCheckbox1, self.enableFFTCheckbox1)
         self.Bind(wx.EVT_CHECKBOX, self.OnFFTCheckbox2, self.enableFFTCheckbox2)
@@ -152,6 +164,7 @@ class GenLoggerFrame(wx.Frame):
         self.__plotitems = []
         self.__packet_thread_id = None
         self.__queue = Queue()
+        self.__log_file = None
 
         wx.CallLater(2000, self.OnRefreshPortsHelper)
 
@@ -223,7 +236,7 @@ class GenLoggerFrame(wx.Frame):
 
         if selected is not None:
             sn, connection = selected.split(':')
-            
+
             self.__labjack = GetLabJackHandler().Open(sn, connection=connection)
             self.__data = {}
 
@@ -261,15 +274,15 @@ class GenLoggerFrame(wx.Frame):
 
         self.__queue.put(data)
 
-        if data is not None:
-            self.__pointcount += len(data[0])
-
-            if self.__timestamp is None:
-                self.__timestamp = time.time()
-            else:
-                now = time.time()
-                elapsed = now - self.__timestamp
-                # print("%.4f points per second (%d)" % (self.__pointcount / elapsed, len(data[0])))
+##        if data is not None:
+##            self.__pointcount += len(data[0])
+##
+##            if self.__timestamp is None:
+##                self.__timestamp = time.time()
+##            else:
+##                now = time.time()
+##                elapsed = now - self.__timestamp
+##                # print("%.4f points per second (%d)" % (self.__pointcount / elapsed, len(data[0])))
 
     # This receives the data packets from the LabJack Streams
     def __packet_thread(self):
@@ -299,6 +312,11 @@ class GenLoggerFrame(wx.Frame):
 
                 if self.enableGraphCheckbox2.IsChecked():
                     self.__plotitems[1].SetValue([ data[n] for n in range(1, len(data), 2) ], channel="AIN1")
+
+                # Send data to log file if requested
+                if self.__log_file is not None:
+                    for index in range(0, len(data), 2):
+                        self.__log_file.write("%.4f,%.4f\n" % (data[index], data[index+1]))
 
     def OnStopButton(self, event):  # wxGlade: GenLoggerFrame.<event_handler>
         self.StopCapture()
@@ -346,5 +364,40 @@ class GenLoggerFrame(wx.Frame):
 
     def OnGraphCheckbox2(self, event):  # wxGlade: GenLoggerFrame.<event_handler>
         self.__plotitems[1].DeleteChannel(self.__CHANNELS[1])
+        event.Skip()
+
+    def OnStartLogButton(self, event):  # wxGlade: GenLoggerFrame.<event_handler>
+        if self.__log_file is not None:
+            with wx.MessageDialog(self, u"Already Logging.  Replace current log file?", caption=u"Close Current Log File", style=wx.CENTER | wx.YES | wx.CANCEL) as question:
+                if question.showModal() == wx.ID_YES:
+                    self.__log_file.close()
+                    self.__log_file = None
+
+        if self.__log_file == None:
+            with wx.FileDialog(self, "Create log file", wildcard="LOG files (*.log)|*.log",
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+
+                if fileDialog.ShowModal() != wx.ID_CANCEL:
+                    # save the current contents in the file
+                    pathname = fileDialog.GetPath()
+                    try:
+                        self.__log_file = open(pathname, "w+")
+                        # Put date/time in comment
+                        self.__log_file.write(u",,Started %s\n" % str(wx.DateTime.Now()))
+                        self.loggingStatus.Show()
+                        self.configSizer.Layout()
+
+                    except IOError:
+                        wx.LogError("Cannot log to file '%s'." % pathname)
+
+        event.Skip()
+
+    def OnStopLogButton(self, event):  # wxGlade: GenLoggerFrame.<event_handler>
+        if self.__log_file is not None:
+            self.__log_file.close()
+            self.__log_file = None
+            self.loggingStatus.Hide()
+            self.configSizer.Layout()
+
         event.Skip()
 # end of class GenLoggerFrame
