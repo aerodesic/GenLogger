@@ -38,7 +38,7 @@ class GenLoggerFrame(wx.Frame):
 
         mainSizer = wx.FlexGridSizer(3, 1, 0, 0)
 
-        self.configSizer = wx.FlexGridSizer(1, 8, 0, 8)
+        self.configSizer = wx.FlexGridSizer(1, 9, 0, 8)
         mainSizer.Add(self.configSizer, 1, wx.ALL | wx.EXPAND, 5)
 
         self.portCombo = wx.ComboBox(self.mainPanel, wx.ID_ANY, choices=[], style=wx.CB_DROPDOWN)
@@ -62,6 +62,9 @@ class GenLoggerFrame(wx.Frame):
         self.loggingStatus = wx.StaticText(self.mainPanel, wx.ID_ANY, "[Logging]")
         self.loggingStatus.Hide()
         self.configSizer.Add(self.loggingStatus, 0, wx.ALIGN_CENTER_VERTICAL, 0)
+
+        self.playbackButton = wx.Button(self.mainPanel, wx.ID_ANY, "Playback")
+        self.configSizer.Add(self.playbackButton, 0, 0, 0)
 
         self.gentestFrame = wx.Button(self.mainPanel, wx.ID_ANY, "Exit")
         self.configSizer.Add(self.gentestFrame, 0, 0, 0)
@@ -92,7 +95,7 @@ class GenLoggerFrame(wx.Frame):
         self.frequencyTHDtext1 = wx.TextCtrl(self.mainPanel, wx.ID_ANY, "")
         titleFrequencySizer.Add(self.frequencyTHDtext1, 0, 0, 0)
 
-        label_4 = wx.StaticText(self.mainPanel, wx.ID_ANY, "THD Phase2")
+        label_4 = wx.StaticText(self.mainPanel, wx.ID_ANY, "THD Phase2:")
         titleFrequencySizer.Add(label_4, 0, wx.ALIGN_CENTER_VERTICAL, 0)
 
         self.frequencyTHDtext2 = wx.TextCtrl(self.mainPanel, wx.ID_ANY, "")
@@ -151,6 +154,7 @@ class GenLoggerFrame(wx.Frame):
         self.Bind(wx.EVT_BUTTON, self.OnStopButton, self.stopButton)
         self.Bind(wx.EVT_BUTTON, self.OnStartLogButton, self.startlogButton)
         self.Bind(wx.EVT_BUTTON, self.OnStopLogButton, self.stoplogButton)
+        self.Bind(wx.EVT_BUTTON, self.OnPlaybackButton, self.playbackButton)
         self.Bind(wx.EVT_BUTTON, self.OnExitButton, self.gentestFrame)
         self.Bind(wx.EVT_CHECKBOX, self.OnFFTCheckbox1, self.enableFFTCheckbox1)
         self.Bind(wx.EVT_CHECKBOX, self.OnFFTCheckbox2, self.enableFFTCheckbox2)
@@ -165,6 +169,8 @@ class GenLoggerFrame(wx.Frame):
         self.__packet_thread_id = None
         self.__queue = Queue()
         self.__log_file = None
+        self.__playback_file = None
+        self.__playback_thread = None
 
         wx.CallLater(2000, self.OnRefreshPortsHelper)
 
@@ -245,8 +251,6 @@ class GenLoggerFrame(wx.Frame):
             # print("StreamStart returned %d" % rc)
 
             if rc != 0:
-                self.__timestamp = None
-                self.__pointcount = 0
                 self.__packet_thread_id = Thread(target=self.__packet_thread)
                 self.__packet_thread_id.start()
             else:
@@ -255,63 +259,49 @@ class GenLoggerFrame(wx.Frame):
         event.Skip()
 
     def __capture_data(self, handle, data):
-##        # One complete line cycle that is at 60 Hz
-##        times=np.linspace(-5, 5, int(self.__SCAN_RATE * 2))
-##        signal=np.sin(times * np.pi * 2)
-##        phases = []
-##        phase_index = 0
-##
-##        # Create one scan_rate set of data
-##        for point in range(int(self.__SCAN_RATE)):
-##            # Two points for AIN0 and AIN1
-##            phases.append(signal[phase_index])
-##            phases.append(-signal[phase_index])
-##            phase_index = (phase_index + 1) % len(signal)
-##
-##        self.__queue.put([phases, 0])
-##        print("phases len %d" % len(phases))
-##        return
-
         self.__queue.put(data)
 
-##        if data is not None:
-##            self.__pointcount += len(data[0])
-##
-##            if self.__timestamp is None:
-##                self.__timestamp = time.time()
-##            else:
-##                now = time.time()
-##                elapsed = now - self.__timestamp
-##                # print("%.4f points per second (%d)" % (self.__pointcount / elapsed, len(data[0])))
+    def __update_fft_with_thd(self, value, channel_name):
+        # print("__update_thd_with_thd: channel_name %s value %s" % (channel_name, value))
+        results = self.__plotitems[0].SetValue(value, channel=channel_name)
+        # print("__update_fft_with_thd returned results %s" % results)
+        if "thd" in results:
+            if channel_name == "AIN0":
+                self.frequencyTHDtext1.SetValue("%.1f" % results["thd"])
+            else:
+                self.frequencyTHDtext2.SetValue("%.1f" % results["thd"])
+
 
     # This receives the data packets from the LabJack Streams
     def __packet_thread(self):
         running = True
         while running:
             packet = self.__queue.get()
+            # print("__packet_thread: %s" % str(packet))
             if packet is None:
                 # All done - shut down
                 running = False
 
             else:
+                # print(".", end='', flush=True)
+
                 data = packet[0]
+
+                data0 = [ data[n] for n in range(0, len(data), 2) ]
+                data1 = [ data[n] for n in range(1, len(data), 2) ]
 
                 # Send the two channels to the plots
                 if self.enableFFTCheckbox1.IsChecked():
-                    results = self.__plotitems[0].SetValue([ data[n] for n in range(0, len(data), 2) ], channel="AIN0")
-                    if "thd" in results:
-                        wx.CallAfter(self.frequencyTHDtext1.SetValue, "%.1f" % results["thd"])
+                    wx.CallAfter(self.__update_fft_with_thd, value=data0, channel_name="AIN0")
 
                 if self.enableFFTCheckbox2.IsChecked():
-                    results = self.__plotitems[0].SetValue([ data[n] for n in range(1, len(data), 2) ], channel="AIN1")
-                    if "thd" in results:
-                        wx.CallAfter(self.frequencyTHDtext2.SetValue, "%.1f" % results["thd"])
+                    wx.CallAfter(self.__update_fft_with_thd, value=data1, channel_name="AIN1")
 
                 if self.enableGraphCheckbox1.IsChecked():
-                    self.__plotitems[1].SetValue([ data[n] for n in range(0, len(data), 2) ], channel="AIN0")
+                    wx.CallAfter(self.__plotitems[1].SetValue, data0, channel="AIN0")
 
                 if self.enableGraphCheckbox2.IsChecked():
-                    self.__plotitems[1].SetValue([ data[n] for n in range(1, len(data), 2) ], channel="AIN1")
+                    wx.CallAfter(self.__plotitems[1].SetValue, data1, channel="AIN1")
 
                 # Send data to log file if requested
                 if self.__log_file is not None:
@@ -383,7 +373,7 @@ class GenLoggerFrame(wx.Frame):
                     try:
                         self.__log_file = open(pathname, "w+")
                         # Put date/time in comment
-                        self.__log_file.write(u",,Started %s\n" % str(wx.DateTime.Now()))
+                        self.__log_file.write(u",,Info:SPS=%d CHANNELS=%d; Started:%s\n" % (self.__SCAN_RATE, 2, str(wx.DateTime.Now())))
                         self.loggingStatus.Show()
                         self.configSizer.Layout()
 
@@ -392,12 +382,112 @@ class GenLoggerFrame(wx.Frame):
 
         event.Skip()
 
+    def __playback_data(self, samples_per_second):
+        time_between_samples = 1.0/float(samples_per_second)
+
+        running = True
+
+        while running:
+            data = []
+
+            working = True
+
+            while working and len(data) < 100:
+                try:
+                    chunk = self.__playback_file.readline().strip()
+                    if len(chunk) == 0:
+                        print("final was %d items" % len(chunk))
+                        working = False
+                    else:
+                        data.extend(chunk.split(','))
+                except:
+                    working = False
+                
+            # print("data is %s" % data)
+
+            if len(data) != 0:
+                data = [[float(value) for value in data]]
+
+                # print("__playback_data: %s" % data)
+
+                # Write as list of floats
+                self.__queue.put(data)
+
+                # print("Sleeping %f seconds" % time_between_samples)
+
+                time.sleep(time_between_samples * len(data[0]))
+                # print("tick %d"  % len(data[0]))
+
+            else:
+                wx.CallAfter(self.StopPlayback)
+                running = False
+
+    def StartPlayback(self, pathname):
+        try:
+            file = open(pathname, "r")
+            # Read first line to get info
+            info = file.readline()
+            starting = info.find("Info:")
+            ending = info.find(";")
+
+            if starting >= 0 and ending >= 0:
+                items = info[starting+5:ending].strip().split(' ')
+                samples_per_second = 0
+
+                for item in items:
+                    name, value = item.split('=')
+                    if name == "SPS":
+                        samples_per_second = int(value)
+
+                if samples_per_second != 0:
+                    # Start thread to process data
+                    self.__packet_thread_id = Thread(target=self.__packet_thread)
+                    self.__packet_thread_id.start()
+
+                    # Set current playback file
+                    self.__playback_file = file
+
+                    # Start thread to read data and put in queue
+                    self.__playback_thread = Thread(target=self.__playback_data, args=(samples_per_second,))
+                    self.__playback_thread.start()
+
+            self.playbackButton.SetLabel(u"Stop Playback")
+            self.configSizer.Layout()
+
+        except:
+            wx.MessageBox(u"Unable to playback %s" % pathname, u"File Error")
+
+
+    def StopPlayback(self):
+        print("StopPlayback called")
+        try:
+            self.__playback_file.close()
+            self.__playback_thread.join()
+
+        except:
+            pass
+
+        self.playbackButton.SetLabel(u"Playback")
+        self.configSizer.Layout()
+
+        self.__playback_file = None
+
     def OnStopLogButton(self, event):  # wxGlade: GenLoggerFrame.<event_handler>
         if self.__log_file is not None:
             self.__log_file.close()
             self.__log_file = None
             self.loggingStatus.Hide()
             self.configSizer.Layout()
+
+        event.Skip()
+
+    def OnPlaybackButton(self, event):  # wxGlade: GenLoggerFrame.<event_handler>
+        if self.__playback_file is not None:
+            self.StopPlayback()
+        else:
+            with wx.FileDialog(self, "Playback log file", wildcard="LOG files (*.log)|*.log", style=wx.FD_OPEN) as fileDialog:
+                if fileDialog.ShowModal() == wx.ID_OK: 
+                    self.StartPlayback(fileDialog.GetPath())
 
         event.Skip()
 # end of class GenLoggerFrame

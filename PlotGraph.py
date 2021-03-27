@@ -323,10 +323,10 @@ class PlotGraph(wx.Panel):
             if "fft" in self.results:
                 results["fft"] = self.out_points[channel];
 
-            elif "average" in self.results:
+            if "average" in self.results:
                 results["average"] = sum(self.out_points[channel]) / len(self.out_points[channel])
 
-            elif "thd" in self.results and self.plottype in [ "cfft", "fft" ]:
+            if "thd" in self.results and self.plottype in [ "cfft", "fft" ]:
                 results["thd"] = self.CalcTHD(channel)
 
             self.Refresh()
@@ -336,14 +336,20 @@ class PlotGraph(wx.Panel):
         return results if len(results) != 0 else None
         
     def CalcTHD(self, channel="default"):
-        # Omit the DC channel
-        max_data_element = max(element.real for element in self.out_points[channel][1:])
+        if len(self.out_points[channel]) < 5:
+            results = 0
 
-        sq_sum = sum(element.real**2 for element in self.out_points[channel][1:])
+        else:
+            # Omit the DC channel
+            max_data_element = max(element.real for element in self.out_points[channel][1:])
 
-        sq_harmonics = sq_sum - max_data_element ** 2
+            sq_sum = sum(element.real**2 for element in self.out_points[channel][1:])
 
-        return math.sqrt(100 * sq_harmonics) / max_data_element
+            sq_harmonics = sq_sum - max_data_element ** 2
+
+            results = math.sqrt(100 * sq_harmonics) / max_data_element
+
+        return results
 
 
     def SetRange(self, yrange):
